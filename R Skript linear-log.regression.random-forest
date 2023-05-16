@@ -1,0 +1,159 @@
+X= read.table("LogReg_Bsp1.csv", sep =";", header = TRUE )
+head(X)
+
+# Labels zuordnen
+X$Kauf_l <- factor(X$Kauf,
+                   levels = c(0,1),
+                   labels = c("Misserfolg", "Erfolg"))
+
+# Daten sichten
+head(X)
+
+table(X$Kauf_l) # Haeufigkeitstabelle
+proportions(table(X$Kauf_l)) # relative Häufigketien
+# Grafische Darstellung von Häufigkeiten
+barplot(prop.table(table(X$Kauf_l))*100, ylab = "Prozent")
+
+# Eigenschaften der unabhängigen Variable
+summary(X$Einkommen)
+
+# 1. Klassisches Modell der linearen Regression
+# Versuch die endogene Variable mit dem klassischen Modell der linearen Regression zu erklären
+# 1.1 Modellschätzung
+linear = lm(Kauf ~ Einkommen, data = X)
+
+# 1.2 Schätzwerte abhängige Variable
+pred_linear = predict(linear, data = X)
+pred_linear
+# 1.3 Modellzusammenfassung
+summary(linear)
+
+# 1.4 Schätzanapssungsdiagramm 
+png("test.png")
+plot(X$Einkommen, X$Kauf)
+abline(linear)
+
+# Fragen:
+# Wie hoch ist die Kaufwahrscheinlichkeit bei dem durchschnittlichem Einkommen?
+coef(linear)
+a = coef(linear)[1]
+b = coef(linear)[2]
+a+b*mean(X$Einkommen)
+# Wie ändert sich die Kaufwahrscheinlichkeit, wenn das Einkommen um 100 Euro erhöht wird?
+b*100
+basis =  a+b*mean(X$Einkommen)
+basis
+plus100 = a+b*(mean(X$Einkommen)+100)
+plus100
+plus100-basis
+#  Kann die Kaufwahrscheinlichkeit negativ werden? Unterhalb welchem Einkommen ist dies der Fall?
+-a/b
+# Kann die Kaufwahrscheinlichkeit größer als 1 werden? Oberhalb  welchem Einkommen ist dies der Fall?
+(1-a)/b
+
+
+
+# 2. Logististische Regression
+
+# 2.1 Demonstriere den Verlauf der Log-Likelihoodfunktion bei alternativen Parameterwerten
+# Der Wert der Konstanten sei bekannt.
+# Der Wert des Steigungsparameters wird mit Hilfe der Maximierung der Likelihoodfunktion gesucht.
+
+konstante = coef(glm(Kauf ~ Einkommen, data = X, family= binomial("logit")))[1]
+ll= rep(NA, 100) 
+beta = rep(NA,100)
+parameter = 0.005
+for ( k in 1:100) {
+  parameter = parameter + 0.0001
+  beta[k] = parameter
+  ll[k] = 
+    sum(log(1/(1+exp(-1*(konstante+beta[k]*X$Einkommen))))*X$Kauf+
+          log(1-(1/(1+exp(-1*(konstante+beta[k]*X$Einkommen)))))*(1-X$Kauf))
+  print(paste("LL: ", ll[k], " Parameter: ", beta[k]))
+  
+}
+
+ll[which.max(ll)]
+beta[which.max(ll)]
+
+png("log_likelihood.png", units = "px", height = 800, width = 1600)
+plot(beta, ll, type = "l", main = 'Log-Likelihood bei alternativen Parameterwerten', 
+     xlab = "Parameter beta(1)", ylab = "Log-Likelihood", col="black", pch=19)
+axis(2, at = seq(0,1,0.2))
+dev.off()
+
+
+# 2.2 Prüfung des Gesamtmodells - Pseudo R2
+# Verwende (installiere) Paket "DescTools" (deskriptive Statistik)  
+# install.packages("DescTools")
+library(DescTools)
+PseudoR2(logit, c("McFadden", "CoxSnell", "Nagelkerke"))
+PseudoR2(logit)
+
+# Klassifizierung
+# confusion matrix (Wahrheitsmatrix)
+
+
+# ROCR Curve
+# install.packages("ROCR")
+library(ROCR)
+ROCRpred = prediction(X$fc_logit, X$Kauf)
+ROCRperf = performance(ROCRpred, measure = "tpr", x.measure = "fpr")
+plot(ROCRperf, colorize = TRUE, print.cutoffs.at = seq(0, 1, 0.20), lwd  = 3  )
+abline(a=0, b= 1)
+
+
+
+# Offensichtlich BUG bei ROCR in der colorize function (CutOff Rate > 1!!!)
+# Festfelgung des Maximalwertes
+attributes(ROCRperf)$alpha.values[[1]][1] = 1
+plot(ROCRperf, colorize = TRUE, print.cutoffs.at = seq(0, 1, 0.20), lwd  = 3  )
+abline(a=0, b= 1)
+
+
+
+# Exkurs Anfang: ROC Daten "von Hand" berechnen
+CutOff = sort(unique(X$fc_logit))
+CutOff
+length(CutOff)
+ROCMat = matrix(data=NA, ncol = 4, nrow = length(CutOff))
+colnames(ROCMat) =  c("CutOff", "tpr", "fpr", "acc")
+ROCMat
+
+for (step in 1:length(CutOff)) {
+  Test =  table(X$fc_logit >= CutOff[step], X$Kauf_l)
+  print(Test)
+  if (nrow(Test) == 2 & ncol(Test) == 2) { 
+    ROCMat[step,1] = CutOff[step]
+    ROCMat[step,2] = Test[2,2]/(Test[1,2]+Test[2,2])
+    ROCMat[step,3] = Test[2,1]/(Test[1,1]+Test[2,1])
+    ROCMat[step,4] = (Test[1,1]+Test[2,2])/sum(Test)
+  }
+}
+ROCMat
+plot(ROCMat[,3], ROCMat[,2], type = "l")
+lines(ROCMat[,3], ROCMat[,2], type = "l", lwd = 6)
+
+# Ende: ROC Daten "von Hand" berechnen
+
+
+auc = performance(ROCRpred,"auc")
+# Sieht etwas bloed aus ...
+auc
+# ... daher besser so:
+paste(slot(auc, "y.name") , " = ", slot(auc, "y.values") )
+
+
+# Accuracy bei alternativen Cut Off
+perf_acc = performance(ROCRpred, measure = "acc")
+plot(perf_acc)
+attributes(test)$x.values[[1]] # Cut Offs ==> unique Liste der prognostizierten Wahrscheinlichkeiten
+attributes(test)$y.values[[1]] # Accurarcy  ==>  Accuracy korrospeondierend zu den Cut Offs 
+
+# 3. WaldTest
+# von Hand ...
+Wald = (coeftest(logit)[2,1]/coeftest(logit)[2,2])^2
+Wald
+pchisq(Wald, df=1, lower.tail = FALSE)
+
+
